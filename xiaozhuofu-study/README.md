@@ -52,7 +52,7 @@ org.apache.zookeeper.server.quorum.QuorumPeerMain
 xxx\zookeeper-release-3.5.4\conf\zoo.cfg
 
 # 项目的工作目录[Working directory]
-xxx\huangguizhao\zookeeper-release-3.5.4
+xxx\zookeeper-release-3.5.4
 ```
 ![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/build-environment/start-project-04.png) 
 
