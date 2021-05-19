@@ -55,3 +55,122 @@ xxx\zookeeper-release-3.5.4\conf\zoo.cfg
 xxx\huangguizhao\zookeeper-release-3.5.4
 ```
 ![](/images/build-environment/start-project-04.png) 
+
+# 二、zookeeper服务器启动初始化流程-源码解析
+## 1.同意启动入口
+不管是单机版还是集群版，这个类都是统一的启动入口：org.apache.zookeeper.server.quorum.QuorumPeerMain  
+![](/images/server-init/QuorumPeerMain.png)   
+内部都是采用main方法来执行
+```java
+public static void main(String[] args) {
+    QuorumPeerMain main = new QuorumPeerMain();
+    try {
+        //真正的核心执行方法
+        //初始化并启动服务
+        main.initializeAndRun(args);
+    } catch (IllegalArgumentException e) {
+        //忽略非核心代码
+    } 
+}
+```
+## 2.核心执行方法解析-确定流程主脉络
+```java
+protected void initializeAndRun(String[] args)
+        throws ConfigException, IOException, AdminServerException
+    {
+    QuorumPeerConfig config = new QuorumPeerConfig();
+    if (args.length == 1) {
+        //1.解析配置文件zoo.cfg
+        config.parse(args[0]);
+    }
+    // Start and schedule the the purge task[启动并定时安排清除任务]
+    //2.启动定时的清理任务，由DatadirCleanupManager对象来实现
+    DatadirCleanupManager purgeMgr = new DatadirCleanupManager(config
+                    .getDataDir(), config.getDataLogDir(), config
+                    .getSnapRetainCount(), config.getPurgeInterval());
+    purgeMgr.start();
+    //3.通过读取配置文件，判断是单机模式还是集群模式
+    //config.isDistributed()：集群模式返回true
+    if (args.length == 1 && config.isDistributed()) {
+        //3.1 走集群模式的路径
+        runFromConfig(config);
+    } else {
+        LOG.warn("Either no config or no quorum defined in config, running "
+                            + " in standalone mode");
+        // there is only server in the quorum -- run as standalone
+        //3.2 走单机模式的路径
+        ZooKeeperServerMain.main(args);
+    }
+}
+```
+![](/images/server-init/initializeAndRun.png)   
+## 3.DatadirCleanupManager-文件清理器
+### 3.1 内部关键属性
+1、原由  
+zookeeper内部管理的数据分两块，一块是内存中的数据，一块是磁盘中的数据（快照，日志）
+随着服务器的运行时间越来越长，那么这些磁盘的历史文件也会越来越多，所以需要采用定时清理
+2、解决方案
+zookeeper内部采用DatadirCleanupManager来实现文件的定期清理
+3、源码关键说明  
+![](/images/server-init/DatadirCleanupManager.png)    
+```java
+public class DatadirCleanupManager {
+    //忽略
+    
+    //快照的地址
+    private final File snapDir;
+
+    //日志的地址
+    private final File dataLogDir;
+
+    //指定需要保留的文件的个数
+    private final int snapRetainCount;
+
+    //指定清除周期，以小时为单位
+    //默认是0 , 表示不开启启动清理功能
+    //需要开启，则在zoo.cfg配置即可，如下：【需要放开就将autopurge.purgeInterval=1注释去掉】
+    //# Purge task interval in hours
+    //# Set to "0" to disable auto purge feature
+    //# autopurge.purgeInterval=1
+    private final int purgeInterval;
+
+    //定时器对象
+    private Timer timer;
+    
+    //忽略
+}
+```
+### 3.2 实现定期清理
+```java
+public void start() {
+    //忽略非核心代码
+    
+    //1.初始化定时器对象，取名并且以后台线程的方式存在
+    timer = new Timer("PurgeTask", true);
+    //2.创建清理任务对象[PurgeTask间接实现Runnable接口]
+    TimerTask task = new PurgeTask(dataLogDir, snapDir, snapRetainCount);
+    //3.设置清理任务的定时执行周期[后台线程执行task任务]
+    timer.scheduleAtFixedRate(task, 0, TimeUnit.HOURS.toMillis(purgeInterval));
+    //4.设置任务的状态
+    purgeTaskStatus = PurgeTaskStatus.STARTED;
+}
+
+//PurgeTask间接实现Runnable接口
+static class PurgeTask extends TimerTask {
+    //忽略非核心代码
+    @Override
+    public void run() {
+        LOG.info("Purge task started.");
+        try {
+            //PurgeTxnLog完成真正的日志清理
+            PurgeTxnLog.purge(logsDir, snapsDir, snapRetainCount);
+        } catch (Exception e) {
+            LOG.error("Error occurred while purging.", e);
+        }
+        LOG.info("Purge task completed.");
+    }
+}
+
+public abstract class TimerTask implements Runnable {}
+```
+![](/images/server-init/DatadirCleanupManager-02.png) 
