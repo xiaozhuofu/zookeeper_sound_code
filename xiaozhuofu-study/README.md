@@ -6,7 +6,7 @@
 ## 1.安装Ant
 网址：http://ant.apache.org/bindownload.cgi
 ### 1.1 下载
-![](/images/build-environment/ant-version.png)
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/build-environment/ant-version.png)
 ### 1.2 解压到指定文件夹
 ### 1.3 配置path环境变量
 ant的解压目录\bin
