@@ -12,7 +12,7 @@
 ant的解压目录\bin
 ### 1.4 验证
 验证ant是否安装成功，cmd窗口，输入ant-version  
-![](/images/build-environment/ant-version-verify.png)
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/build-environment/ant-version-verify.png)
 ## 2.下载zookeeper源码
 网址：https://github.com/apache/zookeeper/tree/release-3.5.4
 ## 3.构建zookeeper源码
@@ -23,15 +23,15 @@ ant eclipse
 ```
 ## 4.将zookeeper源码导入IDEA
 操作路径如下，之后一路往下点，本次JDK版本选择1.8  
-![](/images/build-environment/import-idea-01.png)  
-![](/images/build-environment/import-idea-02.png)
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/build-environment/import-idea-01.png)  
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/build-environment/import-idea-02.png)
 ## 5.配置启动服务的相关参数
 ### 5.1 命名zoo.cfg文件
 在conf目录下，将zoo.sample.cfg复制一份，为zoo.cfg  
-![](/images/build-environment/start-project-01.png)
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/build-environment/start-project-01.png)
 ### 5.2 服务启动类
 看zk服务端的启动流程，所以查看bin目录下的zkServer.sh  
-![](/images/build-environment/start-project-02.png)  
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/build-environment/start-project-02.png)  
 其中可以发现，服务的执行入口
 ```java
 org.apache.zookeeper.server.quorum.QuorumPeerMain
@@ -39,7 +39,7 @@ org.apache.zookeeper.server.quorum.QuorumPeerMain
 其通过执行main方法来实现服务的启动，需要给这个方法通过参数传递配置文件的路径（zoo.cfg）  
 (1)准备zoo.cfg的路径：xxx\zookeeper-release-3.5.4\conf\zoo.cfg  
 (2)准备log4j.properties的路径：xxx\zookeeper-release-3.5.4\conf\log4j.properties  
-![](/images/build-environment/start-project-03.png) 
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/build-environment/start-project-03.png) 
 ### 5.3 配置服务启动相关参数
 ```jshelllanguage
 # 服务主类[Main class]
@@ -54,12 +54,12 @@ xxx\zookeeper-release-3.5.4\conf\zoo.cfg
 # 项目的工作目录[Working directory]
 xxx\huangguizhao\zookeeper-release-3.5.4
 ```
-![](/images/build-environment/start-project-04.png) 
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/build-environment/start-project-04.png) 
 
 # 二、zookeeper服务器启动初始化流程-源码解析
 ## 1.统一启动入口
 不管是单机版还是集群版，这个类都是统一的启动入口：org.apache.zookeeper.server.quorum.QuorumPeerMain  
-![](/images/server-init/QuorumPeerMain.png)   
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/server-init/QuorumPeerMain.png)   
 内部都是采用main方法来执行
 ```java
 public static void main(String[] args) {
@@ -103,7 +103,7 @@ protected void initializeAndRun(String[] args)
     }
 }
 ```
-![](/images/server-init/initializeAndRun.png)   
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/server-init/initializeAndRun.png)   
 ## 3.DatadirCleanupManager-文件清理器
 ### 3.1 内部关键属性
 1、原由  
@@ -112,7 +112,7 @@ zookeeper内部管理的数据分两块，一块是内存中的数据，一块�
 2、解决方案  
 zookeeper内部采用DatadirCleanupManager来实现文件的定期清理  
 3、源码关键说明    
-![](/images/server-init/DatadirCleanupManager.png)    
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/server-init/DatadirCleanupManager.png)    
 ```java
 public class DatadirCleanupManager {
     //忽略
@@ -173,7 +173,7 @@ static class PurgeTask extends TimerTask {
 
 public abstract class TimerTask implements Runnable {}
 ```
-![](/images/server-init/DatadirCleanupManager-02.png) 
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/server-init/DatadirCleanupManager-02.png) 
 
 # 三、单机版服务启动流程-源码解析
 ## 1.启动入口
@@ -181,7 +181,7 @@ public abstract class TimerTask implements Runnable {}
 ZooKeeperServerMain.main(args);
 ```
 ## 2.分析核心方法执行流程
-![](/images/single-server/main.png)  
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/main.png)  
 ```java
 public static void main(String[] args) {
     ZooKeeperServerMain main = new ZooKeeperServerMain();
@@ -212,7 +212,7 @@ protected void initializeAndRun(String[] args) throws ConfigException, IOExcepti
     runFromConfig(config);
 }
 ```
-![](/images/single-server/start-01.png)  
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/start-01.png)  
 ## 3.步骤一：解析配置文件
 ```java
 public void readFrom(QuorumPeerConfig config) {
@@ -292,7 +292,7 @@ public void runFromConfig(ServerConfig config)
 	}
 }
 ```
-![](/images/single-server/start-02.png)  
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/start-02.png)  
 ### 4.1 ZooKeeperServer内部细节
 ```java
 //final ZooKeeperServer zkServer = new ZooKeeperServer(txnLog,config.tickTime, config.minSessionTimeout, config.maxSessionTimeout, null);
@@ -357,7 +357,7 @@ public class ZKDatabase {
 ```
 #### （4）总结：内部数据管理结构
 zookeeper内部需要管理的数据分为三块，其中业务处理分为内存的节点树+快照日志文件（ZKDatabase），还有一块是我们监控数据统计（ServerStats）  
-![](/images/single-server/start-03.png) 
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/start-03.png) 
 ### 4.2 ServerCnxnFactory-处理网络连接
 #### （1）内部的灵活扩展机制
 ```java
@@ -381,9 +381,9 @@ static public ServerCnxnFactory createFactory() throws IOException {
     }
 }
 ```
-![](/images/single-server/start-04.png)   
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/start-04.png)   
 目前内部也支持了Netty来实现网络连接处理  
-![](/images/single-server/start-05.png) 
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/start-05.png) 
 #### （2）启动服务主流程
 ```java
 //cnxnFactory.startup(zkServer)
@@ -391,7 +391,7 @@ public void startup(ZooKeeperServer zkServer) throws IOException, InterruptedExc
     startup(zkServer, true);
 }
 ```
-![](/images/single-server/start-06.png)   
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/start-06.png)   
 ```java
 @Override
 public void startup(ZooKeeperServer zks, boolean startServer)
@@ -408,7 +408,7 @@ public void startup(ZooKeeperServer zks, boolean startServer)
     }
 }
 ```
-![](/images/single-server/start-07.png)  
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/start-07.png)  
 #### （3）步骤一：start()
 ```java
 @Override
@@ -508,9 +508,9 @@ public interface RequestProcessor {
 	//下面是各种实现的子类
 }
 ```
-![](/images/single-server/start-08.png)  
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/start-08.png)  
 ## 5.汇总图
-![](/images/single-server/summary.png)  
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/single-server/summary.png)  
 1、解析配置文件zoo.cfg  
   
 【内部数据管理】  
@@ -819,7 +819,7 @@ public void run() {
 }
 ```
 ## 3.汇总图
-![](/images/cluster/summary.png) 
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images/cluster/summary.png) 
 
 # 四、单机版服务、集群服务启动流程汇总图
-![](/images/all.png) 
+![](https://github.com/xiaozhuofu/zookeeper_sound_code/blob/master/xiaozhuofu-study/images//all.png) 
