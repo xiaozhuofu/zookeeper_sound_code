@@ -57,7 +57,7 @@ xxx\huangguizhao\zookeeper-release-3.5.4
 ![](/images/build-environment/start-project-04.png) 
 
 # 二、zookeeper服务器启动初始化流程-源码解析
-## 1.同意启动入口
+## 1.统一启动入口
 不管是单机版还是集群版，这个类都是统一的启动入口：org.apache.zookeeper.server.quorum.QuorumPeerMain  
 ![](/images/server-init/QuorumPeerMain.png)   
 内部都是采用main方法来执行
@@ -108,10 +108,10 @@ protected void initializeAndRun(String[] args)
 ### 3.1 内部关键属性
 1、原由  
 zookeeper内部管理的数据分两块，一块是内存中的数据，一块是磁盘中的数据（快照，日志）
-随着服务器的运行时间越来越长，那么这些磁盘的历史文件也会越来越多，所以需要采用定时清理
-2、解决方案
-zookeeper内部采用DatadirCleanupManager来实现文件的定期清理
-3、源码关键说明  
+随着服务器的运行时间越来越长，那么这些磁盘的历史文件也会越来越多，所以需要采用定时清理  
+2、解决方案  
+zookeeper内部采用DatadirCleanupManager来实现文件的定期清理  
+3、源码关键说明    
 ![](/images/server-init/DatadirCleanupManager.png)    
 ```java
 public class DatadirCleanupManager {
@@ -174,3 +174,351 @@ static class PurgeTask extends TimerTask {
 public abstract class TimerTask implements Runnable {}
 ```
 ![](/images/server-init/DatadirCleanupManager-02.png) 
+
+# 三、单机版服务启动流程
+## 1.启动入口
+```java
+ZooKeeperServerMain.main(args);
+```
+## 2.分析核心方法执行流程
+![](/images/single-server/main.png)  
+```java
+public static void main(String[] args) {
+    ZooKeeperServerMain main = new ZooKeeperServerMain();
+    try {
+        //才是真正的核心逻辑方法
+        main.initializeAndRun(args);
+    } catch (IllegalArgumentException e) {
+        //忽略非核心逻辑代码
+    } 
+}
+
+
+protected void initializeAndRun(String[] args) throws ConfigException, IOException, AdminServerException {
+    //忽略非核心逻辑代码（JMX监控服务）
+    
+    //目的：关注的是zookeeper如何对外提供服务的
+    //配置文件对象
+    ServerConfig config = new ServerConfig();
+    if (args.length == 1) {
+        //1.解析配置文件
+        config.parse(args[0]);
+    } else {
+        config.parse(args);
+    }
+    
+    //2.根据配置文件来运行zookeeper服务
+    //继续发现boss[核心]
+    runFromConfig(config);
+}
+```
+![](/images/single-server/start-01.png)  
+## 3.步骤一：解析配置文件
+```java
+public void readFrom(QuorumPeerConfig config) {
+    //客户端端口
+    clientPortAddress = config.getClientPortAddress();
+    secureClientPortAddress = config.getSecureClientPortAddress();
+    //快照文件对象
+    dataDir = config.getDataDir();
+    //日志文件对象
+    dataLogDir = config.getDataLogDir();
+    tickTime = config.getTickTime();
+    maxClientCnxns = config.getMaxClientCnxns();
+    minSessionTimeout = config.getMinSessionTimeout();
+    maxSessionTimeout = config.getMaxSessionTimeout();
+}
+```
+## 4.步骤二：启动zookeeper服务
+执行入口：runFromConfig(config)  
+```java
+public void runFromConfig(ServerConfig config)
+            throws IOException, AdminServerException {
+	LOG.info("Starting server");
+	FileTxnSnapLog txnLog = null;
+	try {
+		// Note that this thread isn't going to be doing anything else,
+		// so rather than spawning another thread, we will just call
+		// run() in this thread.
+		// create a file logger url from the command line args
+        
+        //1.创建并初始化快照日志文件操作对象
+		txnLog = new FileTxnSnapLog(config.dataLogDir, config.dataDir);
+        //2.创建并初始化zookeeper服务对象
+		final ZooKeeperServer zkServer = new ZooKeeperServer(txnLog,
+		                    config.tickTime, config.minSessionTimeout, config.maxSessionTimeout, null);
+		// Registers shutdown handler which will be used to know the
+		// server error or shutdown state changes.
+       
+        //3.监控zookeeper服务的关闭情况（不是重点）
+		final CountDownLatch shutdownLatch = new CountDownLatch(1);
+		zkServer.registerServerShutdownHandler(
+		                    new ZooKeeperServerShutdownHandler(shutdownLatch));
+        
+		// Start Admin server
+        //4.管理服务，用于监控zookeeper服务的运行情况（不是重点）
+		adminServer = AdminServerFactory.createAdminServer();
+		adminServer.setZooKeeperServer(zkServer);
+		adminServer.start();
+		Boolean needStartZKServer = true;
+		if (config.getClientPortAddress() != null) {
+            //5.创建ServerCnxnFactory对象，用于处理客户端和服务端的连接请求
+			cnxnFactory = ServerCnxnFactory.createFactory();
+			cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), false);
+            //6.启动服务
+			cnxnFactory.startup(zkServer);
+			// zkServer has been started. So we don't need to start it again in secureCnxnFactory.
+			needStartZKServer = false;
+		}
+		if (config.getSecureClientPortAddress() != null) {
+			secureCnxnFactory = ServerCnxnFactory.createFactory();
+			secureCnxnFactory.configure(config.getSecureClientPortAddress(), config.getMaxClientCnxns(), true);
+			secureCnxnFactory.startup(zkServer, needStartZKServer);
+		}
+		containerManager = new ContainerManager(zkServer.getZKDatabase(), zkServer.firstProcessor,
+		                    Integer.getInteger("znode.container.checkIntervalMs", (int) TimeUnit.MINUTES.toMillis(1)),
+		                    Integer.getInteger("znode.container.maxPerMinute", 10000)
+		            );
+		containerManager.start();
+		// Watch status of ZooKeeper server. It will do a graceful shutdown
+		// if the server is not running or hits an internal error.
+		shutdownLatch.await();
+		shutdown();
+		
+        //忽略
+	}
+	catch (InterruptedException e) {
+		//忽略
+	}
+}
+```
+![](/images/single-server/start-02.png)  
+### 4.1 ZooKeeperServer内部细节
+```java
+//final ZooKeeperServer zkServer = new ZooKeeperServer(txnLog,config.tickTime, config.minSessionTimeout, config.maxSessionTimeout, null);
+public ZooKeeperServer(FileTxnSnapLog txnLogFactory, int tickTime,int minSessionTimeout, int maxSessionTimeout, ZKDatabase zkDb) {
+    //1.创建serverStats对象，服务状态对象
+    serverStats = new ServerStats(this);
+    //2.操作日志和快照文件的对象[FileTxnSnapLog]
+    this.txnLogFactory = txnLogFactory;
+    //3.zookeeper数据库对象[ZKDatabase]
+    this.zkDb = zkDb;
+    //4.会话超时管理
+    this.tickTime = tickTime;
+    setMinSessionTimeout(minSessionTimeout);
+    setMaxSessionTimeout(maxSessionTimeout);
+    listener = new ZooKeeperServerListenerImpl(this);
+    
+    //忽略非核心代码
+}
+```
+#### （1）ServerStats-封装监控数据的统计信息
+```java
+public class ServerStats {
+    //1.服务端向客户端发送的响应包次数
+    private long packetsSent;
+    //2.接收到的客户端发送的请求包次数
+    private long packetsReceived;
+    //3.服务端处理请求的延迟情况
+    private long maxLatency;
+    private long minLatency = Long.MAX_VALUE;
+    private long totalLatency = 0;
+    //4.服务端处理客户端的请求次数
+    private long count = 0;
+}
+```
+#### （2）FileTxnSnapLog-实现快照及日志文件的持久化
+```java
+public class FileTxnSnapLog {
+    //the direcotry containing the
+    //the transaction logs
+    //文件目录
+    private final File dataDir;
+    //the directory containing the
+    //the snapshot directory
+    //快照
+    private final File snapDir;
+    //日志
+    private TxnLog txnLog;
+    private SnapShot snapLog;
+}
+```
+#### （3）ZKDatabase-zookeeper数据库对象
+```java
+public class ZKDatabase {
+
+    //1.内存的数据节点（节点树）
+    protected DataTree dataTree;
+    //2.快照及日志文件
+    protected FileTxnSnapLog snapLog;
+    //3.管理会话
+    protected ConcurrentHashMap<Long, Integer> sessionsWithTimeouts;
+}
+```
+#### （4）总结：内部数据管理结构
+zookeeper内部需要管理的数据分为三块，其中业务处理分为内存的节点树+快照日志文件（ZKDatabase），还有一块是我们监控数据统计（ServerStats）  
+![](/images/single-server/start-03.png) 
+### 4.2 ServerCnxnFactory-处理网络连接
+#### （1）内部的灵活扩展机制
+```java
+static public ServerCnxnFactory createFactory() throws IOException {
+    //1.读取系统的参数-zookeeper.serverCnxnFactory    [ZOOKEEPER_SERVER_CNXN_FACTORY = "zookeeper.serverCnxnFactory"]
+    String serverCnxnFactoryName =
+        System.getProperty(ZOOKEEPER_SERVER_CNXN_FACTORY);
+    if (serverCnxnFactoryName == null) {
+        //2.如果没有配置，则获取到NIOServerCnxnFactory的类名  [没有配置的话，zookeeper默认用的是NIOServerCnxnFactory，但是zk内部也实现了可以用netty来实现网络连接]
+        serverCnxnFactoryName = NIOServerCnxnFactory.class.getName();
+    }
+    try {
+        //3.根据这个类名通过反射来具体的实例化ServerCnxnFactory对象
+        //网络连接的处理方式支持通过参数的设置的方式来扩展
+        ServerCnxnFactory serverCnxnFactory = (ServerCnxnFactory) Class.forName(serverCnxnFactoryName)
+            .getDeclaredConstructor().newInstance();
+        LOG.info("Using {} as server connection factory", serverCnxnFactoryName);
+        return serverCnxnFactory;
+    } catch (Exception e) {
+        //忽略非核心代码
+    }
+}
+```
+![](/images/single-server/start-04.png)   
+目前内部也支持了Netty来实现网络连接处理  
+![](/images/single-server/start-05.png) 
+#### （2）启动服务主流程
+```java
+//cnxnFactory.startup(zkServer)
+public void startup(ZooKeeperServer zkServer) throws IOException, InterruptedException {
+    startup(zkServer, true);
+}
+```
+![](/images/single-server/start-06.png)   
+```java
+@Override
+public void startup(ZooKeeperServer zks, boolean startServer)
+    throws IOException, InterruptedException {
+    //1.启动相关的处理线程
+    start();
+    setZooKeeperServer(zks);
+    
+    if (startServer) {
+        //2.数据相关-恢复本地数据
+        zks.startdata();
+        //3.启动服务-建立处理请求责任链
+        zks.startup();
+    }
+}
+```
+![](/images/single-server/start-07.png)  
+#### （3）步骤一：start()
+```java
+@Override
+public void start() {
+    stopped = false;
+    //线程池
+    if (workerPool == null) {
+        workerPool = new WorkerService(
+            "NIOWorker", numWorkerThreads, false);
+    }
+    //选择器
+    for(SelectorThread thread : selectorThreads) {
+        if (thread.getState() == Thread.State.NEW) {
+            thread.start();
+        }
+    }
+    // ensure thread is started once and only once
+    //accept线程
+    if (acceptThread.getState() == Thread.State.NEW) {
+        acceptThread.start();
+    }
+    //expirer超时线程
+    if (expirerThread.getState() == Thread.State.NEW) {
+        expirerThread.start();
+    }
+}
+```
+#### （4）步骤二：zks.startdata()
+```java
+public void startdata()
+    throws IOException, InterruptedException {
+    //check to see if zkDb is not null
+    //初始化zk的数据库对象
+    if (zkDb == null) {
+        zkDb = new ZKDatabase(this.txnLogFactory);
+    }
+    if (!zkDb.isInitialized()) {
+        //加载本地数据-做数据恢复 [zkDb不是初始化了，证明已经在运行了，需要将内存中的数据加载到磁盘，避免宕机的数据丢失，可以做数据恢复]
+        loadData();
+    }
+}
+```
+#### （5）步骤三：zks.startup()
+```java
+public synchronized void startup() {
+    if (sessionTracker == null) {
+        createSessionTracker();
+    }
+    //1.启动session的跟踪器
+    startSessionTracker();
+    //2.重点：建立请求处理链路(责任链)
+    setupRequestProcessors();
+	
+    //3.注册JMX
+    registerJMX();
+
+    setState(State.RUNNING);
+    notifyAll();
+}
+```
+### 4.3 责任链模式的请求处理链
+责任链模式，每个处理器处理请求的不同逻辑部分【可以联想 Netty的handler处理链】  
+```java
+// setupRequestProcessors()
+protected void setupRequestProcessors() {
+    //RequestProcessor-请求处理器
+    RequestProcessor finalProcessor = new FinalRequestProcessor(this);
+    RequestProcessor syncProcessor = new SyncRequestProcessor(this,finalProcessor);
+    ((SyncRequestProcessor)syncProcessor).start();
+    firstProcessor = new PrepRequestProcessor(this, syncProcessor);
+    ((PrepRequestProcessor)firstProcessor).start();
+}
+
+// RequestProcessor finalProcessor = new FinalRequestProcessor(this);
+public FinalRequestProcessor(ZooKeeperServer zks) {
+    this.zks = zks;
+}
+
+//RequestProcessor syncProcessor = new SyncRequestProcessor(this,finalProcessor);
+// syncProcessor的下一个处理器是finalProcessor
+public SyncRequestProcessor(ZooKeeperServer zks,RequestProcessor nextProcessor) {
+    super("SyncThread:" + zks.getServerId(), zks.getZooKeeperServerListener());
+    this.zks = zks;
+    this.nextProcessor = nextProcessor;
+    running = true;
+}
+
+//firstProcessor = new PrepRequestProcessor(this, syncProcessor);
+// firstProcessor的下一个处理器是syncProcessor
+public PrepRequestProcessor(ZooKeeperServer zks,RequestProcessor nextProcessor) {
+    super("ProcessThread(sid:" + zks.getServerId() + " cport:" + zks.getClientPort() + "):", zks.getZooKeeperServerListener());
+    this.nextProcessor = nextProcessor;
+    this.zks = zks;
+}
+
+public interface RequestProcessor {
+	//下面是各种实现的子类
+}
+```
+![](/images/single-server/start-08.png)  
+## 5.汇总图
+![](/images/single-server/summary.png)  
+1、解析配置文件zoo.cfg  
+  
+【内部数据管理】  
+2、zookeeper内部的数据管理结构（DataTree+FileTxnSnapLog）  
+3、FileTxnSnapLog实现快照日志文件的持久化  
+4、DatadirCleanupManager定期清理快照日志文件（文件清理采用的是PurgetTxnLog）  
+  
+【对外提供服务】  
+前提条件：加载本地数据  
+1、ServerCnxnFactory（NIO，Netty等），负责处理客户端连接请求  
+2、基于责任链模式的处理链  
