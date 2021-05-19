@@ -175,7 +175,7 @@ public abstract class TimerTask implements Runnable {}
 ```
 ![](/images/server-init/DatadirCleanupManager-02.png) 
 
-# 三、单机版服务启动流程
+# 三、单机版服务启动流程-源码解析
 ## 1.启动入口
 ```java
 ZooKeeperServerMain.main(args);
