@@ -522,3 +522,304 @@ public interface RequestProcessor {
 前提条件：加载本地数据  
 1、ServerCnxnFactory（NIO，Netty等），负责处理客户端连接请求  
 2、基于责任链模式的处理链  
+
+# 三、集群服务器的启动流程-源码解析
+## 1.执行入口
+```java
+//if (args.length == 1 && config.isDistributed()) {
+//    runFromConfig(config);
+//}
+
+public void runFromConfig(QuorumPeerConfig config)throws IOException, AdminServerException{
+     
+   	//忽略非核心代码
+    
+    try {
+        ServerCnxnFactory cnxnFactory = null;
+        ServerCnxnFactory secureCnxnFactory = null;
+
+        if (config.getClientPortAddress() != null) {
+            //1.创建ServerCnxnFactory对象，处理网络连接
+            cnxnFactory = ServerCnxnFactory.createFactory();
+            cnxnFactory.configure(config.getClientPortAddress(),
+                                  config.getMaxClientCnxns(),
+                                  false);
+        }
+
+        //忽略非核心代码
+
+        //2.创建QuorumPeer对象，表示一个服务实例
+        quorumPeer = getQuorumPeer();
+        //3.为其设置FileTxnSnapLog属性
+        quorumPeer.setTxnFactory(new FileTxnSnapLog(
+            config.getDataLogDir(),
+            config.getDataDir()));
+        quorumPeer.enableLocalSessions(config.areLocalSessionsEnabled());
+        quorumPeer.enableLocalSessionsUpgrading(
+            config.isLocalSessionsUpgradingEnabled());
+        //quorumPeer.setQuorumPeers(config.getAllMembers());
+        //4.设置选举类型
+        quorumPeer.setElectionType(config.getElectionAlg());
+        //server Id
+        quorumPeer.setMyid(config.getServerId());
+        quorumPeer.setTickTime(config.getTickTime());
+        quorumPeer.setMinSessionTimeout(config.getMinSessionTimeout());
+        quorumPeer.setMaxSessionTimeout(config.getMaxSessionTimeout());
+        quorumPeer.setInitLimit(config.getInitLimit());
+        quorumPeer.setSyncLimit(config.getSyncLimit());
+        quorumPeer.setConfigFileName(config.getConfigFilename());
+        //5.设置ZKDatabase
+        quorumPeer.setZKDatabase(new ZKDatabase(quorumPeer.getTxnFactory()));
+        quorumPeer.setQuorumVerifier(config.getQuorumVerifier(), false);
+        if (config.getLastSeenQuorumVerifier()!=null) {
+            quorumPeer.setLastSeenQuorumVerifier(config.getLastSeenQuorumVerifier(), false);
+        }
+        quorumPeer.initConfigInZKDatabase();
+        quorumPeer.setCnxnFactory(cnxnFactory);
+        quorumPeer.setSecureCnxnFactory(secureCnxnFactory);
+        quorumPeer.setLearnerType(config.getPeerType());
+        quorumPeer.setSyncEnabled(config.getSyncEnabled());
+        quorumPeer.setQuorumListenOnAllIPs(config.getQuorumListenOnAllIPs());
+
+        // sets quorum sasl authentication configurations
+        quorumPeer.setQuorumSaslEnabled(config.quorumEnableSasl);
+        if(quorumPeer.isQuorumSaslAuthEnabled()){
+            quorumPeer.setQuorumServerSaslRequired(config.quorumServerRequireSasl);
+            quorumPeer.setQuorumLearnerSaslRequired(config.quorumLearnerRequireSasl);
+            quorumPeer.setQuorumServicePrincipal(config.quorumServicePrincipal);
+            quorumPeer.setQuorumServerLoginContext(config.quorumServerLoginContext);
+            quorumPeer.setQuorumLearnerLoginContext(config.quorumLearnerLoginContext);
+        }
+        quorumPeer.setQuorumCnxnThreadsSize(config.quorumCnxnThreadsSize);
+        //初始化服务节点的相关信息
+        quorumPeer.initialize();
+        
+        //启动服务
+        quorumPeer.start();
+        quorumPeer.join();
+    } catch (InterruptedException e) {
+        // warn, but generally this is ok
+        LOG.warn("Quorum Peer interrupted", e);
+    }
+}
+```
+## 2.start方法继续解读
+```java
+quorumPeer.start();
+
+//QuorumPeer
+@Override
+public synchronized void start() {
+    //忽略非核心代码
+    
+    //装载数据
+    loadDataBase();
+    
+    //启动网络服务
+    startServerCnxnFactory();
+    
+    //忽略非核心代码
+    
+    //选举？？【其实是初始化选举算法】
+    startLeaderElection();
+    
+    //开启选举算法
+    super.start();
+}
+```
+### 2.1 startLeaderElection()-解读
+```java
+synchronized public void startLeaderElection() {
+    try {
+        if (getPeerState() == ServerState.LOOKING) {
+            //构建选票
+            currentVote = new Vote(myid, getLastLoggedZxid(), getCurrentEpoch());
+        }
+    } catch(IOException e) {
+        //忽略
+    }
+
+    //忽略
+    
+    //初始化选举算法
+    //electionType默认是3 [因为zk集群leader选举采用过半数follower机制，肯定奇数，无设置的话那默认就是3]
+    this.electionAlg = createElectionAlgorithm(electionType);
+}
+
+//this.electionAlg = createElectionAlgorithm(electionType);
+protected Election createElectionAlgorithm(int electionAlgorithm){
+    Election le=null;
+
+    //TODO: use a factory rather than a switch
+    switch (electionAlgorithm) {
+        //忽略无关代码
+        case 3:
+            qcm = createCnxnManager();
+            QuorumCnxManager.Listener listener = qcm.listener;
+            if(listener != null){
+                listener.start();
+                //标识为3，采用的选举算法为FastLeaderElection
+                FastLeaderElection fle = new FastLeaderElection(this, qcm);
+                fle.start();
+                le = fle;
+            } else {
+                LOG.error("Null listener when initializing cnx manager");
+            }
+            break;
+        default:
+            assert false;
+    }
+    return le;
+}
+```
+### 2.2 super.start()-开启选举算法
+```java
+//QuorumPeer
+super.start();
+
+//进入父类Thread模板方法, QuorumPeer继承Thread，会执行QuorumPeer内部的run方法
+public synchronized void start() {
+    /**
+         * This method is not invoked for the main method thread or "system"
+         * group threads created/set up by the VM. Any new functionality added
+         * to this method in the future may have to also be added to the VM.
+         *
+         * A zero status value corresponds to state "NEW".
+         */
+    if (threadStatus != 0)
+        throw new IllegalThreadStateException();
+
+    /* Notify the group that this thread is about to be started
+         * so that it can be added to the group's list of threads
+         * and the group's unstarted count can be decremented. */
+    group.add(this);
+
+    boolean started = false;
+    try {
+        start0();
+        started = true;
+    } finally {
+        try {
+            if (!started) {
+                group.threadStartFailed(this);
+            }
+        } catch (Throwable ignore) {
+            /* do nothing. If start0 threw a Throwable then
+                  it will be passed up the call stack */
+        }
+    }
+}
+
+//QuorumPeer内部run方法
+@Override
+public void run() {
+    updateThreadName();
+
+    //忽略非核心代码
+
+    try {
+        /*
+             * Main loop
+             */
+        while (running) {
+            switch (getPeerState()) {
+                case LOOKING:
+                    //判断当前服务器的状态是否为Looking
+                    LOG.info("LOOKING");
+
+                    if (Boolean.getBoolean("readonlymode.enabled")) {
+                        LOG.info("Attempting to start ReadOnlyZooKeeperServer");
+
+                        // Create read-only server but don't start it immediately
+                        final ReadOnlyZooKeeperServer roZk =
+                            new ReadOnlyZooKeeperServer(logFactory, this, this.zkDb);
+
+                         //忽略非核心代码
+                        
+                        try {
+                            roZkMgr.start();
+                            reconfigFlagClear();
+                            if (shuttingDownLE) {
+                                shuttingDownLE = false;
+                                startLeaderElection();
+                            }
+                            //调用lookForLeader()方法
+                            setCurrentVote(makeLEStrategy().lookForLeader());
+                        } catch (Exception e) {
+                            LOG.warn("Unexpected exception", e);
+                            setPeerState(ServerState.LOOKING);
+                        } finally {
+                            // If the thread is in the the grace period, interrupt
+                            // to come out of waiting.
+                            roZkMgr.interrupt();
+                            roZk.shutdown();
+                        }
+                    } else {
+                        try {
+                            reconfigFlagClear();
+                            if (shuttingDownLE) {
+                                shuttingDownLE = false;
+                                startLeaderElection();
+                            }
+                            setCurrentVote(makeLEStrategy().lookForLeader());
+                        } catch (Exception e) {
+                            LOG.warn("Unexpected exception", e);
+                            setPeerState(ServerState.LOOKING);
+                        }                        
+                    }
+                    break;
+                case OBSERVING:
+                    try {
+                        LOG.info("OBSERVING");
+                        setObserver(makeObserver(logFactory));
+                        observer.observeLeader();
+                    } catch (Exception e) {
+                        LOG.warn("Unexpected exception",e );
+                    } finally {
+                        observer.shutdown();
+                        setObserver(null);  
+                        updateServerState();
+                    }
+                    break;
+                case FOLLOWING:
+                    try {
+                        LOG.info("FOLLOWING");
+                        setFollower(makeFollower(logFactory));
+                        follower.followLeader();
+                    } catch (Exception e) {
+                        LOG.warn("Unexpected exception",e);
+                    } finally {
+                        follower.shutdown();
+                        setFollower(null);
+                        updateServerState();
+                    }
+                    break;
+                case LEADING:
+                    LOG.info("LEADING");
+                    try {
+                        setLeader(makeLeader(logFactory));
+                        leader.lead();
+                        setLeader(null);
+                    } catch (Exception e) {
+                        LOG.warn("Unexpected exception",e);
+                    } finally {
+                        if (leader != null) {
+                            leader.shutdown("Forcing shutdown");
+                            setLeader(null);
+                        }
+                        updateServerState();
+                    }
+                    break;
+            }
+            start_fle = Time.currentElapsedTime();
+        }
+    } finally {
+        //忽略非核心代码
+    }
+}
+```
+## 3.汇总图
+![](/images/cluster/summary.png) 
+
+# 四、单机版服务、集群服务启动流程汇总图
+![](/images/all.png) 
